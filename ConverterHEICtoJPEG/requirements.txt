@@ -1,0 +1,6 @@
+# Per garantire l'installazione delle librerie necessarie, utilizza il seguente file:
+# pip install -r requirements.txt
+
+# Contenuto di requirements.txt:
+# Pillow
+# pyheif
