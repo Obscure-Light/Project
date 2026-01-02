@@ -17,7 +17,7 @@ from database import (
 )
 
 from .constants import LIV_JUNIOR, LIV_SENIOR, SUMMER_EXCLUDED_MONTHS
-from .rules import RuleMode, merge_with_defaults
+from .rules import GenerationRuleConfig, RuleMode, merge_with_defaults
 
 
 def date_attive_anno(
@@ -162,7 +162,8 @@ class Scheduler:
 
         self.rules = merge_with_defaults(config.generation_rules)
         self.rule_min_senior = self.rules["min_senior"]
-        self.rule_weekly_cap = self.rules["weekly_cap"]
+        # Il limite settimanale è sempre hard: ignoro eventuali configurazioni soft/off.
+        self.rule_weekly_cap = GenerationRuleConfig(mode=RuleMode.HARD, value=None)
         self.rule_summer = self.rules["summer_exclusion"]
         self.rule_varchi = self.rules["varchi_rotation"]
 
@@ -538,7 +539,9 @@ class Scheduler:
                 "VIGILI",
                 f"Candidati insufficienti ({len(disponibili)}/{n_vigili}) dopo aver applicato ferie, limiti e vincoli.",
             )
-            return None
+            if not disponibili:
+                return None
+            n_vigili = len(disponibili)
 
         ci_sono_senior = any(
             self.esperienza_vigili.get(nome, LIV_JUNIOR) == LIV_SENIOR for nome in disponibili

@@ -461,6 +461,9 @@ class Database:
                         parsed = min(definition.max_value, parsed)
                     value = parsed
             rules[key] = GenerationRuleConfig(mode=mode, value=value)
+        # Il limite settimanale è sempre hard: ignoro eventuali configurazioni soft/off salvate.
+        if "weekly_cap" in rules:
+            rules["weekly_cap"] = GenerationRuleConfig(mode=RuleMode.HARD, value=None)
         return rules
 
     def load_generation_rules_config(self) -> Dict[str, GenerationRuleConfig]:
@@ -470,6 +473,9 @@ class Database:
         definition = RULE_DEFINITIONS.get(key)
         if definition is None:
             raise KeyError(f"Regola sconosciuta: {key}")
+        if key == "weekly_cap":
+            # Forzo sempre hard per evitare che il limite settimanale venga rilassato.
+            config = GenerationRuleConfig(mode=RuleMode.HARD, value=None)
         self.set_setting(f"rule.{key}.mode", config.mode.value)
         if definition.has_value:
             if config.value is not None:

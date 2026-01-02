@@ -705,7 +705,8 @@ class SchedulerManagerApp(tk.Tk):
         self.generation_rule_vars: Dict[str, Dict[str, object]] = {}
         for idx, (key, definition) in enumerate(RULE_DEFINITIONS.items(), start=1):
             ttk.Label(regole_frame, text=definition.label).grid(row=idx, column=0, padx=4, pady=4, sticky="w")
-            mode_var = tk.StringVar(value=MODE_DISPLAY[definition.default_mode.value])
+            default_display = MODE_DISPLAY[definition.default_mode.value]
+            mode_var = tk.StringVar(value=default_display)
             mode_combo = ttk.Combobox(
                 regole_frame,
                 textvariable=mode_var,
@@ -713,6 +714,11 @@ class SchedulerManagerApp(tk.Tk):
                 values=list(MODE_DISPLAY.values()),
             )
             mode_combo.grid(row=idx, column=1, padx=4, pady=4, sticky="ew")
+            if key == "weekly_cap":
+                # Il limite settimanale è sempre hard: disabilito la scelta di modalità diverse.
+                hard_label = MODE_DISPLAY[RuleMode.HARD.value]
+                mode_var.set(hard_label)
+                mode_combo.configure(state="disabled", values=[hard_label])
             value_var: Optional[tk.IntVar] = None
             value_widget: Optional[ttk.Spinbox] = None
             if definition.has_value:
@@ -798,7 +804,10 @@ class SchedulerManagerApp(tk.Tk):
         rule_configs = self.db.load_generation_rules_config()
         for key, data in self.generation_rule_vars.items():
             config = rule_configs.get(key) or GenerationRuleConfig()
-            display = MODE_DISPLAY.get(config.mode.value, MODE_DISPLAY[RuleMode.HARD.value])
+            if key == "weekly_cap":
+                display = MODE_DISPLAY[RuleMode.HARD.value]
+            else:
+                display = MODE_DISPLAY.get(config.mode.value, MODE_DISPLAY[RuleMode.HARD.value])
             data["mode_var"].set(display)
             definition = data["definition"]
             if definition.has_value and data["value_var"] is not None:
@@ -835,9 +844,12 @@ class SchedulerManagerApp(tk.Tk):
 
         for key, data in self.generation_rule_vars.items():
             definition = data["definition"]
-            mode_display = data["mode_var"].get()
-            mode_value = MODE_FROM_DISPLAY.get(mode_display, RuleMode.HARD.value)
-            config = GenerationRuleConfig(mode=RuleMode(mode_value))
+            if key == "weekly_cap":
+                config = GenerationRuleConfig(mode=RuleMode.HARD)
+            else:
+                mode_display = data["mode_var"].get()
+                mode_value = MODE_FROM_DISPLAY.get(mode_display, RuleMode.HARD.value)
+                config = GenerationRuleConfig(mode=RuleMode(mode_value))
             if definition.has_value and data["value_var"] is not None:
                 value = data["value_var"].get()
                 if definition.min_value is not None:
