@@ -84,6 +84,7 @@ class PersonProfile:
     is_vigile: bool
     livello: str
     weekly_cap: int
+    rest_hours: int
 
     @property
     def display_name(self) -> str:
@@ -125,6 +126,7 @@ class ProgramConfig:
     vigili: List[str]
     esperienza_vigili: Dict[str, str]
     weekly_cap: Dict[str, int] = field(default_factory=dict)
+    rest_hours: Dict[str, int] = field(default_factory=dict)
     coppie_vietate: List[ConstraintRule] = field(default_factory=list)
     coppie_preferite: List[PreferredRule] = field(default_factory=list)
     autista_varchi: Optional[str] = None
@@ -204,6 +206,7 @@ class Database:
         self._ensure_column("people", "ruolo", "TEXT DEFAULT ''")
         self._ensure_column("people", "grado", "TEXT")
         self._ensure_column("people", "weekly_cap", f"INTEGER DEFAULT {DEFAULT_WEEKLY_CAP}")
+        self._ensure_column("people", "rest_hours", "INTEGER NOT NULL DEFAULT 0")
 
         self._ensure_column("forbidden_pairs", "is_hard", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("preferred_pairs", "is_hard", "INTEGER NOT NULL DEFAULT 0")
@@ -233,6 +236,7 @@ class Database:
         is_vigile: Optional[bool] = None,
         livello: Optional[str] = None,
         weekly_cap: Optional[int] = None,
+        rest_hours: Optional[int] = None,
     ) -> int:
         """Insert or update a person and return the person id."""
         base_name = _normalize_whitespace(name)
@@ -262,13 +266,14 @@ class Database:
         row = cur.fetchone()
 
         insert_weekly_cap = weekly_cap if weekly_cap is not None else DEFAULT_WEEKLY_CAP
+        insert_rest_hours = max(0, rest_hours) if rest_hours is not None else 0
 
         if row is None:
             self.conn.execute(
                 """
                 INSERT INTO people (name, first_name, last_name, phone, email, ruolo, grado,
-                                    is_autista, is_vigile, livello, weekly_cap)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    is_autista, is_vigile, livello, weekly_cap, rest_hours)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     base_name,
@@ -282,6 +287,7 @@ class Database:
                     int(is_vigile or False),
                     livello or "JUNIOR",
                     insert_weekly_cap,
+                    insert_rest_hours,
                 ),
             )
             self.conn.commit()
@@ -308,6 +314,8 @@ class Database:
             updates["livello"] = livello
         if weekly_cap is not None:
             updates["weekly_cap"] = int(weekly_cap)
+        if rest_hours is not None:
+            updates["rest_hours"] = int(max(0, rest_hours))
 
         if updates:
             updates["name"] = base_name
@@ -348,6 +356,7 @@ class Database:
         is_vigile: bool,
         livello: str,
         weekly_cap: int,
+        rest_hours: int,
     ):
         cleaned = _normalize_whitespace(name)
         if not cleaned:
@@ -375,6 +384,7 @@ class Database:
             UPDATE people
             SET name = ?, first_name = ?, last_name = ?, phone = ?, email = ?, ruolo = ?, grado = ?,
                 is_autista = ?, is_vigile = ?, livello = ?, weekly_cap = ?
+                , rest_hours = ?
             WHERE id = ?
             """,
             (
@@ -389,6 +399,7 @@ class Database:
                 int(is_vigile),
                 livello or "JUNIOR",
                 int(weekly_cap),
+                int(max(0, rest_hours)),
                 person_id,
             ),
         )
@@ -450,6 +461,9 @@ class Database:
                         parsed = min(definition.max_value, parsed)
                     value = parsed
             rules[key] = GenerationRuleConfig(mode=mode, value=value)
+        # Il limite settimanale è sempre hard: ignoro eventuali configurazioni soft/off salvate.
+        if "weekly_cap" in rules:
+            rules["weekly_cap"] = GenerationRuleConfig(mode=RuleMode.HARD, value=None)
         return rules
 
     def load_generation_rules_config(self) -> Dict[str, GenerationRuleConfig]:
@@ -459,6 +473,9 @@ class Database:
         definition = RULE_DEFINITIONS.get(key)
         if definition is None:
             raise KeyError(f"Regola sconosciuta: {key}")
+        if key == "weekly_cap":
+            # Forzo sempre hard per evitare che il limite settimanale venga rilassato.
+            config = GenerationRuleConfig(mode=RuleMode.HARD, value=None)
         self.set_setting(f"rule.{key}.mode", config.mode.value)
         if definition.has_value:
             if config.value is not None:
@@ -615,6 +632,7 @@ class Database:
         vigili: List[str] = []
         esperienza: Dict[str, str] = {}
         weekly_caps: Dict[str, int] = {}
+        rest_hours: Dict[str, int] = {}
         profiles: Dict[str, PersonProfile] = {}
 
         for row in people_rows:
@@ -633,6 +651,7 @@ class Database:
                 if row["weekly_cap"] is not None
                 else DEFAULT_WEEKLY_CAP
             )
+            rest_value = int(row["rest_hours"]) if row["rest_hours"] is not None else 0
             profile = PersonProfile(
                 id=int(row["id"]),
                 nome=first_name or name,
@@ -645,9 +664,11 @@ class Database:
                 is_vigile=bool(row["is_vigile"]),
                 livello=row["livello"] or "JUNIOR",
                 weekly_cap=weekly_cap,
+                rest_hours=rest_value,
             )
             profiles[name] = profile
             weekly_caps[name] = weekly_cap
+            rest_hours[name] = rest_value
             if profile.is_autista:
                 autisti.append(name)
             if profile.is_vigile:
@@ -734,6 +755,7 @@ class Database:
             vigili=vigili,
             esperienza_vigili=esperienza,
             weekly_cap=weekly_caps,
+            rest_hours=rest_hours,
             coppie_vietate=forbidden_pairs,
             coppie_preferite=preferred_pairs,
             autista_varchi=autista_varchi_name,

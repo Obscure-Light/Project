@@ -17,7 +17,7 @@ from database import (
 )
 
 from .constants import LIV_JUNIOR, LIV_SENIOR, SUMMER_EXCLUDED_MONTHS
-from .rules import RuleMode, merge_with_defaults
+from .rules import GenerationRuleConfig, RuleMode, merge_with_defaults
 
 
 def date_attive_anno(
@@ -56,6 +56,7 @@ class Conteggi:
     per_giorno_anno: Dict[str, Dict[int, int]] = field(default_factory=dict)
     per_settimana: Dict[str, Dict[Tuple[int, int], int]] = field(default_factory=dict)
     ultimo_giorno: Dict[str, Optional[int]] = field(default_factory=dict)
+    ultima_data: Dict[str, Optional[date]] = field(default_factory=dict)
 
     def assicura_persona(self, nome: str) -> None:
         if nome not in self.annuale:
@@ -72,6 +73,8 @@ class Conteggi:
             self.per_settimana[nome] = {}
         if nome not in self.ultimo_giorno:
             self.ultimo_giorno[nome] = None
+        if nome not in self.ultima_data:
+            self.ultima_data[nome] = None
 
     def aggiungi(self, nome: str, giorno: date) -> None:
         self.assicura_persona(nome)
@@ -85,6 +88,7 @@ class Conteggi:
         self.per_giorno_anno[nome][dow] += 1
         self.per_settimana[nome][week_key] = self.per_settimana[nome].get(week_key, 0) + 1
         self.ultimo_giorno[nome] = dow
+        self.ultima_data[nome] = giorno
 
     def tot_mese(self, nome: str, mese: int) -> int:
         self.assicura_persona(nome)
@@ -109,6 +113,10 @@ class Conteggi:
     def ultimo_dow(self, nome: str) -> Optional[int]:
         self.assicura_persona(nome)
         return self.ultimo_giorno[nome]
+
+    def ultima_data_servizio(self, nome: str) -> Optional[date]:
+        self.assicura_persona(nome)
+        return self.ultima_data[nome]
 
 
 @dataclass
@@ -135,6 +143,7 @@ class Scheduler:
         self.esperienza_vigili = {
             nome: config.esperienza_vigili.get(nome, LIV_JUNIOR) for nome in self.vigili
         }
+        self.rest_hours: Dict[str, int] = {nome: max(0, config.rest_hours.get(nome, 0)) for nome in set(self.autisti) | set(self.vigili)}
 
         self.forbidden_hard: Set[frozenset] = {
             frozenset(rule.as_sorted_tuple()) for rule in config.coppie_vietate if rule.is_hard
@@ -153,7 +162,8 @@ class Scheduler:
 
         self.rules = merge_with_defaults(config.generation_rules)
         self.rule_min_senior = self.rules["min_senior"]
-        self.rule_weekly_cap = self.rules["weekly_cap"]
+        # Il limite settimanale è sempre hard: ignoro eventuali configurazioni soft/off.
+        self.rule_weekly_cap = GenerationRuleConfig(mode=RuleMode.HARD, value=None)
         self.rule_summer = self.rules["summer_exclusion"]
         self.rule_varchi = self.rules["varchi_rotation"]
 
@@ -218,6 +228,14 @@ class Scheduler:
         if cap <= 0:
             return False
         return conteggi.tot_settimana(nome, self._week_key(giorno)) >= cap
+
+    def _rispetta_riposo(self, conteggi: Conteggi, nome: str, giorno: date) -> bool:
+        last_date = conteggi.ultima_data_servizio(nome)
+        riposo_ore = max(0, self.rest_hours.get(nome, 0))
+        if riposo_ore <= 0 or last_date is None:
+            return True
+        delta_hours = (giorno - last_date).days * 24
+        return delta_hours >= riposo_ore
 
     def _in_ferie(self, nome: str, giorno: date) -> bool:
         for vac in self.ferie.get(nome, []):
@@ -408,6 +426,8 @@ class Scheduler:
                 continue
             if self._in_ferie(nome, giorno):
                 continue
+            if not self._rispetta_riposo(self.cont_aut, nome, giorno):
+                continue
             limit_raw = self._limite_raggiunto_raw(self.cont_aut, nome, giorno)
             if self.rule_weekly_cap.mode == RuleMode.HARD and limit_raw:
                 continue
@@ -478,6 +498,8 @@ class Scheduler:
                 continue
             if self._in_ferie(nome, giorno):
                 continue
+            if not self._rispetta_riposo(self.cont_vig, nome, giorno):
+                continue
             summer_block = (
                 self.vigile_escluso_estate
                 and nome == self.vigile_escluso_estate
@@ -517,7 +539,9 @@ class Scheduler:
                 "VIGILI",
                 f"Candidati insufficienti ({len(disponibili)}/{n_vigili}) dopo aver applicato ferie, limiti e vincoli.",
             )
-            return None
+            if not disponibili:
+                return None
+            n_vigili = len(disponibili)
 
         ci_sono_senior = any(
             self.esperienza_vigili.get(nome, LIV_JUNIOR) == LIV_SENIOR for nome in disponibili
@@ -685,6 +709,13 @@ class Scheduler:
                 giorno,
                 "VIGILI",
                 f"{self.autista_varchi} ha già raggiunto il limite settimanale: niente quarto SENIOR speciale.",
+            )
+            return squadra
+        if not self._rispetta_riposo(self.cont_vig, self.autista_varchi, giorno):
+            self._log(
+                giorno,
+                "VIGILI",
+                f"{self.autista_varchi} non rispetta il periodo di riposo: niente quarto SENIOR speciale.",
             )
             return squadra
 

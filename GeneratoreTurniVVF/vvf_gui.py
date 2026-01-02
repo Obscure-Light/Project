@@ -133,6 +133,7 @@ class SchedulerManagerApp(tk.Tk):
             "autista",
             "vigile",
             "weekly_cap",
+            "rest_hours",
             "telefono",
             "email",
         )
@@ -149,6 +150,7 @@ class SchedulerManagerApp(tk.Tk):
             ("autista", "Autista", 70),
             ("vigile", "Vigile", 70),
             ("weekly_cap", "Turni/sett.", 90),
+            ("rest_hours", "Riposo (h)", 90),
             ("telefono", "Telefono", 120),
             ("email", "E-mail", 160),
         ]
@@ -165,9 +167,9 @@ class SchedulerManagerApp(tk.Tk):
         # Form di dettaglio
         form = ttk.LabelFrame(container, text="Dettaglio")
         form.grid(row=0, column=1, sticky="nsew")
-        for i in range(8):
+        for i in range(9):
             form.rowconfigure(i, weight=0)
-        form.rowconfigure(8, weight=1)
+        form.rowconfigure(9, weight=1)
         form.columnconfigure(1, weight=1)
 
         ttk.Label(form, text="Nome").grid(row=0, column=0, sticky="w", padx=4, pady=4)
@@ -207,8 +209,14 @@ class SchedulerManagerApp(tk.Tk):
             row=6, column=1, sticky="w", padx=4, pady=4
         )
 
+        ttk.Label(form, text="Ore di riposo dopo un turno").grid(row=7, column=0, sticky="w", padx=4, pady=4)
+        self.person_rest_hours = tk.IntVar(value=0)
+        ttk.Spinbox(form, from_=0, to=240, textvariable=self.person_rest_hours, width=5).grid(
+            row=7, column=1, sticky="w", padx=4, pady=4
+        )
+
         btn_frame = ttk.Frame(form)
-        btn_frame.grid(row=7, column=0, columnspan=2, pady=12)
+        btn_frame.grid(row=8, column=0, columnspan=2, pady=12)
         ttk.Button(btn_frame, text="Salva", command=self.save_person).grid(row=0, column=0, padx=4)
         ttk.Button(btn_frame, text="Nuovo", command=self.reset_person_form).grid(row=0, column=1, padx=4)
         ttk.Button(btn_frame, text="Elimina", command=self.delete_person).grid(row=0, column=2, padx=4)
@@ -219,12 +227,13 @@ class SchedulerManagerApp(tk.Tk):
             text=(
                 "Nota:\n"
                 "• Il campo \"Ruolo\" determina automaticamente se la persona è autista, vigile o entrambi.\n"
-                "• Il limite settimanale si applica sia agli autisti sia ai vigili; 0 significa nessun limite."
+                "• Il limite settimanale si applica sia agli autisti sia ai vigili; 0 significa nessun limite.\n"
+                "• Le ore di riposo impediscono l'assegnazione di nuovi turni finché non sono trascorse."
             ),
             foreground="#555555",
             justify="left",
         )
-        help_label.grid(row=8, column=0, columnspan=2, sticky="sw", padx=4, pady=(8, 4))
+        help_label.grid(row=9, column=0, columnspan=2, sticky="sw", padx=4, pady=(8, 4))
 
     def _toggle_grade_state(self) -> None:
         ruolo = self.person_role.get()
@@ -243,6 +252,7 @@ class SchedulerManagerApp(tk.Tk):
         self.person_role.set(ROLE_VIGILE)
         self.person_grade.set("JUNIOR")
         self.person_weekly_cap.set(DEFAULT_WEEKLY_CAP)
+        self.person_rest_hours.set(0)
         self._toggle_grade_state()
         self.people_tree.selection_remove(self.people_tree.selection())
 
@@ -268,6 +278,7 @@ class SchedulerManagerApp(tk.Tk):
         else:
             self.person_grade.set("")
         self.person_weekly_cap.set(int(row["weekly_cap"]) if row["weekly_cap"] is not None else DEFAULT_WEEKLY_CAP)
+        self.person_rest_hours.set(int(row["rest_hours"]) if row.get("rest_hours") is not None else 0)
         self._toggle_grade_state()
 
     def save_person(self) -> None:
@@ -282,6 +293,7 @@ class SchedulerManagerApp(tk.Tk):
         phone = self.person_phone.get().strip()
         email = self.person_email.get().strip()
         weekly_cap = max(0, self.person_weekly_cap.get())
+        rest_hours = max(0, self.person_rest_hours.get())
 
         is_autista = ruolo in (ROLE_AUTISTA, ROLE_AUTISTA_VIGILE)
         is_vigile = ruolo in (ROLE_VIGILE, ROLE_AUTISTA_VIGILE)
@@ -306,6 +318,7 @@ class SchedulerManagerApp(tk.Tk):
                     is_vigile=is_vigile,
                     livello=livello,
                     weekly_cap=weekly_cap,
+                    rest_hours=rest_hours,
                 )
             else:
                 self.db.update_person(
@@ -321,6 +334,7 @@ class SchedulerManagerApp(tk.Tk):
                     is_vigile=is_vigile,
                     livello=livello,
                     weekly_cap=weekly_cap,
+                    rest_hours=rest_hours,
                 )
             self.refresh_people_list()
             self.refresh_pairs_lists()
@@ -369,6 +383,7 @@ class SchedulerManagerApp(tk.Tk):
                     "Sì" if row["is_autista"] else "No",
                     "Sì" if row["is_vigile"] else "No",
                     row["weekly_cap"] if row["weekly_cap"] is not None else DEFAULT_WEEKLY_CAP,
+                    row["rest_hours"] if row["rest_hours"] is not None else 0,
                     row["phone"] or "",
                     row["email"] or "",
                 ),
@@ -690,7 +705,8 @@ class SchedulerManagerApp(tk.Tk):
         self.generation_rule_vars: Dict[str, Dict[str, object]] = {}
         for idx, (key, definition) in enumerate(RULE_DEFINITIONS.items(), start=1):
             ttk.Label(regole_frame, text=definition.label).grid(row=idx, column=0, padx=4, pady=4, sticky="w")
-            mode_var = tk.StringVar(value=MODE_DISPLAY[definition.default_mode.value])
+            default_display = MODE_DISPLAY[definition.default_mode.value]
+            mode_var = tk.StringVar(value=default_display)
             mode_combo = ttk.Combobox(
                 regole_frame,
                 textvariable=mode_var,
@@ -698,6 +714,11 @@ class SchedulerManagerApp(tk.Tk):
                 values=list(MODE_DISPLAY.values()),
             )
             mode_combo.grid(row=idx, column=1, padx=4, pady=4, sticky="ew")
+            if key == "weekly_cap":
+                # Il limite settimanale è sempre hard: disabilito la scelta di modalità diverse.
+                hard_label = MODE_DISPLAY[RuleMode.HARD.value]
+                mode_var.set(hard_label)
+                mode_combo.configure(state="disabled", values=[hard_label])
             value_var: Optional[tk.IntVar] = None
             value_widget: Optional[ttk.Spinbox] = None
             if definition.has_value:
@@ -783,7 +804,10 @@ class SchedulerManagerApp(tk.Tk):
         rule_configs = self.db.load_generation_rules_config()
         for key, data in self.generation_rule_vars.items():
             config = rule_configs.get(key) or GenerationRuleConfig()
-            display = MODE_DISPLAY.get(config.mode.value, MODE_DISPLAY[RuleMode.HARD.value])
+            if key == "weekly_cap":
+                display = MODE_DISPLAY[RuleMode.HARD.value]
+            else:
+                display = MODE_DISPLAY.get(config.mode.value, MODE_DISPLAY[RuleMode.HARD.value])
             data["mode_var"].set(display)
             definition = data["definition"]
             if definition.has_value and data["value_var"] is not None:
@@ -820,9 +844,12 @@ class SchedulerManagerApp(tk.Tk):
 
         for key, data in self.generation_rule_vars.items():
             definition = data["definition"]
-            mode_display = data["mode_var"].get()
-            mode_value = MODE_FROM_DISPLAY.get(mode_display, RuleMode.HARD.value)
-            config = GenerationRuleConfig(mode=RuleMode(mode_value))
+            if key == "weekly_cap":
+                config = GenerationRuleConfig(mode=RuleMode.HARD)
+            else:
+                mode_display = data["mode_var"].get()
+                mode_value = MODE_FROM_DISPLAY.get(mode_display, RuleMode.HARD.value)
+                config = GenerationRuleConfig(mode=RuleMode(mode_value))
             if definition.has_value and data["value_var"] is not None:
                 value = data["value_var"].get()
                 if definition.min_value is not None:

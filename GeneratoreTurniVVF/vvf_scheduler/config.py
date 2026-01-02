@@ -118,6 +118,7 @@ def build_program_config_from_files(
                 is_vigile=vigile,
                 livello=livello,
                 weekly_cap=DEFAULT_WEEKLY_CAP,
+                rest_hours=0,
             )
             persone[nome_visualizzato] = profilo
         else:
@@ -146,6 +147,7 @@ def build_program_config_from_files(
     elenco_vigili = sorted(persone)
     esperienza = {nome: profilo.livello for nome, profilo in persone.items()}
     weekly_caps = {nome: profilo.weekly_cap for nome, profilo in persone.items()}
+    rest_hours_map = {nome: profilo.rest_hours for nome, profilo in persone.items()}
 
     coppie_vietate: List[ConstraintRule] = []
     for primo, secondo in DEFAULT_FORBIDDEN_PAIRS:
@@ -173,6 +175,7 @@ def build_program_config_from_files(
         vigili=elenco_vigili,
         esperienza_vigili=esperienza,
         weekly_cap=weekly_caps,
+        rest_hours=rest_hours_map,
         coppie_vietate=coppie_vietate,
         coppie_preferite=coppie_preferite,
         autista_varchi=autista_varchi,
